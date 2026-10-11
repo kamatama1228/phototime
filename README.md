@@ -17,9 +17,6 @@ Memories and similar libraries.
 
 日本語版は [README.ja.md](README.ja.md) にあります。
 
-> **This is a draft.** The repository has not been published yet (no repository
-> creation, no topics, no published README). Publishing is the owner's decision.
-
 ---
 
 ## Before you start (so that nothing here is over-promised)
