@@ -96,6 +96,84 @@ after_offset, action, reason`
 `action` は、dry-run では `would_update` / `would_write_xmp` / `unchanged` /
 `skipped`、`--apply` では `updated` / `xmp_only` / `unchanged` / `skipped` です。
 
+### `reason` の意味
+
+| `reason` | 何が起きたか |
+|---|---|
+| `offset_required` | 日時の情報源が **瞬間**（JSON sidecar か file の mtime）で、オフセットの明示が無かった。**その file は skip し、何も書いていません。** `--shift` か `--assume-tz` を付けて実行し直してください。 |
+| `unsupported_structure` | 書き込んでよい形の JPEG だと判断できなかった。たとえば **EXIF の APP1 segment が 2 つ以上ある** 場合で、どれを正とするか決められません。**skip します。** XMP など、EXIF 以外の APP1 は、この理由になりません。 |
+| `unreadable_jpeg` | JPEG として始まっているが、解釈できなかった（途中で切れている、segment のつながりが合わない）。**skip します。** |
+| `not_a_jpeg` / `empty_file` | JPEG ではない file、または大きさが 0 の file。**skip します。** |
+| `unreadable_file` | file を開けなかった（権限など）。**skip します。** |
+| `exif_tag_absent` | 上書きする `DateTimeOriginal` が無かったため、値を `<file>.xmp` に書きました（`xmp_only`）。**JPEG 本体は変更していません。** |
+| `offset_tag_absent` | 日時の tag はその場で書き換えたが、上書きする `OffsetTimeOriginal` が無かったため、オフセットを `<file>.xmp` に書きました。 |
+| `value_too_long` | 新しい値が、長さの決まっている既存の tag に収まらなかった。**segment を広げないため skip します。** |
+| `no_change` | 書こうとした値が、すでに入っていた。何もしません。 |
+
+## 実行例
+
+file は 3 つです。`IMG_0001.jpg` は EXIF に日時があるがオフセットが無い、
+`IMG_0002.jpg` は EXIF に日時が無く、隣に `IMG_0002.jpg.json` だけがある、
+`IMG_0003.jpg` は EXIF の APP1 が 2 つある、という状態です。
+
+**1. dry-run（既定）。CSV も含めて、何も書きません。**
+
+```
+$ python3 -m phototime ~/photos
+DRY RUN: no file is changed (pass --apply to write)
+file          source        kind       before               after                offset  action     reason
+------------  ------------  ---------  -------------------  -------------------  ------  ---------  ---------------------
+IMG_0001.jpg  exif          wallclock  2023:05:04 12:14:56  2023:05:04 12:14:56  -       unchanged  no_change
+IMG_0002.jpg  json_sidecar  instant    -                    -                    -       skipped    offset_required
+IMG_0003.jpg  -             -          -                    -                    -       skipped    unsupported_structure
+3 files / skipped 2 / unchanged 1
+```
+
+`IMG_0002.jpg` を skip するのは、意図した動作です。sidecar が与えるのは
+**瞬間** であり、オフセットの明示が無いので、推定しません。
+
+**2. 同じ計画を CSV に出す。**
+
+```
+$ python3 -m phototime ~/photos --report ~/plan.csv
+```
+
+```
+path,source,source_kind,before_datetime,after_datetime,before_offset,after_offset,action,reason
+/home/you/photos/IMG_0001.jpg,exif,wallclock,2023:05:04 12:14:56,2023:05:04 12:14:56,,,unchanged,no_change
+/home/you/photos/IMG_0002.jpg,json_sidecar,instant,,,,,skipped,offset_required
+/home/you/photos/IMG_0003.jpg,,,,,,,skipped,unsupported_structure
+```
+
+**3. オフセットを明示して、journal を残して書き込む。**
+
+```
+$ python3 -m phototime ~/photos --shift +09:00 --apply --journal ~/undo.json
+journal: /home/you/undo.json (run --undo /home/you/undo.json to revert these changes)
+file          source        kind       before               after                offset    action    reason
+------------  ------------  ---------  -------------------  -------------------  --------  --------  ---------------------
+IMG_0001.jpg  exif          wallclock  2023:05:04 12:14:56  2023:05:04 12:14:56  ->+09:00  updated   offset_tag_absent
+IMG_0002.jpg  json_sidecar  instant    -                    2023:05:04 13:14:56  ->+09:00  xmp_only  exif_tag_absent
+IMG_0003.jpg  -             -          -                    -                    -         skipped   unsupported_structure
+3 files / skipped 1 / updated 1 / xmp_only 1
+```
+
+`--shift +09:00` を付けたことで、2 つのことが変わりました。`IMG_0002.jpg` は
+skip されなくなり、瞬間 `2023-05-04 04:14:56 UTC` が壁時計の
+`2023:05:04 13:14:56` になりました。`IMG_0001.jpg` は壁時計の値をそのまま使い、
+オフセットが付きます——ただし上書きする `OffsetTimeOriginal` tag が無いため、
+オフセットは `IMG_0001.jpg.xmp` に書かれます（`offset_tag_absent`）。
+
+**4. 元に戻す。**
+
+```
+$ python3 -m phototime --undo ~/undo.json
+Reverted 4 entries (journal: /home/you/undo.json)
+```
+
+往復した後、写真は **3 の前と 1 byte も違いません。** 3 で書かれた XMP sidecar も
+消えます。entry は記録した変更の 1 件ずつなので、file の数より多くなります。
+
 ## できないこと
 
 - **EXIF に存在しない tag の新規追加。** 既存の値の上書きだけを行います

@@ -15,8 +15,8 @@ It is meant for situations like these:
 It is meant to be run **before** importing into immich, PhotoPrism, Nextcloud
 Memories and similar libraries.
 
-日本語版は [README.ja.md](README.ja.md) にあります。
 Japanese: [README.ja.md](README.ja.md)
+
 ---
 
 ## Before you start (so that nothing here is over-promised)
@@ -100,6 +100,85 @@ after_offset, action, reason`
 In a dry-run, `action` is one of `would_update`, `would_write_xmp`, `unchanged`,
 `skipped`. With `--apply`, it is one of `updated`, `xmp_only`, `unchanged`,
 `skipped`.
+
+### What `reason` means
+
+| `reason` | What happened |
+|---|---|
+| `offset_required` | The date came from an **instant** source (a JSON sidecar or the file mtime) and you did not state an offset. **The file was skipped**; nothing was written. Re-run with `--shift` or `--assume-tz`. |
+| `unsupported_structure` | The JPEG is not in a shape this tool is willing to write into — for example it holds **two or more EXIF APP1 segments**, so the tool cannot tell which one is authoritative. **Skipped.** Other APP1 segments, such as XMP, do not cause this. |
+| `unreadable_jpeg` | The file starts like a JPEG but could not be parsed (truncated, or the segment chain does not add up). **Skipped.** |
+| `not_a_jpeg` / `empty_file` | The file is not a JPEG at all, or has zero length. **Skipped.** |
+| `unreadable_file` | The file could not be opened (permissions and similar). **Skipped.** |
+| `exif_tag_absent` | There is no existing `DateTimeOriginal` to overwrite, so the value went to `<file>.xmp` instead (`xmp_only`). The JPEG itself was not modified. |
+| `offset_tag_absent` | The date tag was updated in place, but there was no existing `OffsetTimeOriginal` to overwrite, so the offset went to `<file>.xmp`. |
+| `value_too_long` | The new value does not fit into the existing tag, which has a fixed length. The tool does not grow the segment. **Skipped.** |
+| `no_change` | The file already holds the value the tool would write. Nothing to do. |
+
+## An example run
+
+Three files: `IMG_0001.jpg` has an EXIF date but no offset, `IMG_0002.jpg` has no
+EXIF date and only a `IMG_0002.jpg.json` sidecar next to it, `IMG_0003.jpg`
+carries two EXIF APP1 segments.
+
+**1. Dry-run (the default). Nothing is written, not even the CSV.**
+
+```
+$ python3 -m phototime ~/photos
+DRY RUN: no file is changed (pass --apply to write)
+file          source        kind       before               after                offset  action     reason
+------------  ------------  ---------  -------------------  -------------------  ------  ---------  ---------------------
+IMG_0001.jpg  exif          wallclock  2023:05:04 12:14:56  2023:05:04 12:14:56  -       unchanged  no_change
+IMG_0002.jpg  json_sidecar  instant    -                    -                    -       skipped    offset_required
+IMG_0003.jpg  -             -          -                    -                    -       skipped    unsupported_structure
+3 files / skipped 2 / unchanged 1
+```
+
+`IMG_0002.jpg` is skipped on purpose: the sidecar gives an **instant**, and no
+offset was stated, so the tool refuses to guess one.
+
+**2. The same plan as a CSV.**
+
+```
+$ python3 -m phototime ~/photos --report ~/plan.csv
+```
+
+```
+path,source,source_kind,before_datetime,after_datetime,before_offset,after_offset,action,reason
+/home/you/photos/IMG_0001.jpg,exif,wallclock,2023:05:04 12:14:56,2023:05:04 12:14:56,,,unchanged,no_change
+/home/you/photos/IMG_0002.jpg,json_sidecar,instant,,,,,skipped,offset_required
+/home/you/photos/IMG_0003.jpg,,,,,,,skipped,unsupported_structure
+```
+
+**3. Write, stating the offset, with a journal.**
+
+```
+$ python3 -m phototime ~/photos --shift +09:00 --apply --journal ~/undo.json
+journal: /home/you/undo.json (run --undo /home/you/undo.json to revert these changes)
+file          source        kind       before               after                offset    action    reason
+------------  ------------  ---------  -------------------  -------------------  --------  --------  ---------------------
+IMG_0001.jpg  exif          wallclock  2023:05:04 12:14:56  2023:05:04 12:14:56  ->+09:00  updated   offset_tag_absent
+IMG_0002.jpg  json_sidecar  instant    -                    2023:05:04 13:14:56  ->+09:00  xmp_only  exif_tag_absent
+IMG_0003.jpg  -             -          -                    -                    -         skipped   unsupported_structure
+3 files / skipped 1 / updated 1 / xmp_only 1
+```
+
+Two things changed with `--shift +09:00`. `IMG_0002.jpg` is no longer skipped:
+the instant `2023-05-04 04:14:56 UTC` becomes the wall clock time
+`2023:05:04 13:14:56`. And `IMG_0001.jpg`, whose wall clock time is used as it
+is, now gets an offset — but it has no `OffsetTimeOriginal` tag to overwrite, so
+that offset goes to `IMG_0001.jpg.xmp` (`offset_tag_absent`).
+
+**4. Roll it back.**
+
+```
+$ python3 -m phototime --undo ~/undo.json
+Reverted 4 entries (journal: /home/you/undo.json)
+```
+
+After the round trip, the photos are **byte for byte what they were before step
+3**, and the XMP sidecars written in step 3 are removed again. An entry is one
+recorded change, so there are more entries than files.
 
 ## What it does not do
 
