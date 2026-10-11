@@ -12,9 +12,6 @@
 
 English version: [README.md](README.md)
 
-> **これは下書きです。** 公開（repository の作成、topics の設定、README の公開）は
-> 行っていません。公開は所有者の判断で行います。
-
 ---
 
 ## 先にお伝えすること（過大な約束をしないために）
