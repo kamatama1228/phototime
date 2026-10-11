@@ -16,7 +16,7 @@ It is meant to be run **before** importing into immich, PhotoPrism, Nextcloud
 Memories and similar libraries.
 
 日本語版は [README.ja.md](README.ja.md) にあります。
-
+Japanese: [README.ja.md](README.ja.md)
 ---
 
 ## Before you start (so that nothing here is over-promised)
